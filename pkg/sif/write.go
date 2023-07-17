@@ -6,10 +6,12 @@ package sif
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/sylabs/sif/v2/pkg/sif"
 )
@@ -156,4 +158,40 @@ func Write(path string, ii v1.ImageIndex) error {
 	f := fileImage{fi}
 
 	return f.writeIndexToFileImage(ii, true)
+}
+
+// WriteImage constructs a SIF at path containing a single Image.
+func WriteImage(path string, img v1.Image) error {
+	fi, err := sif.CreateContainerAtPath(path, sif.OptCreateDeterministic())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fi.UnloadContainer() }()
+
+	f := fileImage{fi}
+
+	// Get descriptor for image.
+	d, err := partial.Descriptor(img)
+	if err != nil {
+		return err
+	}
+
+	// Write img (including config and layers) to SIF.
+	if err := f.writeImageToFileImage(img); err != nil {
+		return err
+	}
+
+	// Construct an image index that contains only img.
+	im := v1.IndexManifest{
+		SchemaVersion: 2,
+		MediaType:     types.OCIImageIndex,
+		Manifests:     []v1.Descriptor{*d},
+	}
+
+	b, err := json.Marshal(im)
+	if err != nil {
+		return err
+	}
+
+	return f.writeBlobToFileImage(bytes.NewReader(b), true)
 }
